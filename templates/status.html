@@ -1,0 +1,124 @@
+<!-- templates/status.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Processing Repository...</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+    <style>
+        body { max-width: 800px; margin: auto; padding: 1rem; }
+        .container { text-align: center; margin-top: 5rem; }
+        .loader {
+            border: 8px solid #f3f3f3;
+            border-top: 8px solid #3498db;
+            border-radius: 50%;
+            width: 60px;
+            height: 60px;
+            animation: spin 2s linear infinite;
+            margin: 2rem auto;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #download-section {
+            display: none; /* Hidden by default */
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- This section is shown while processing -->
+        <div id="loading-section">
+            <h1>Analyzing Repository...</h1>
+            <p>This may take several minutes. Please keep this page open.</p>
+            <div class="loader"></div>
+            <p>Job ID: {{ job_id }}</p>
+        </div>
+
+        <!-- This section is shown when complete -->
+        <div id="download-section">
+            <h1>Analysis Complete!</h1>
+            <p>Your documentation is ready for download.</p>
+            <a href="#" id="download-link"><button style="font-size: 1.2rem;">Download .zip File</button></a>
+        </div>
+
+        <!-- This section is shown on failure -->
+        <div id="error-section" style="display: none; color: red;">
+            <h1>An Error Occurred</h1>
+            <p id="error-message"></p>
+        </div>
+    </div>
+
+    <!-- The JavaScript will go here in the next step -->
+     <!-- Paste this right before the </body> tag in templates/status.html -->
+    <script>
+        // This function will run when the page is fully loaded
+        document.addEventListener('DOMContentLoaded', function() {
+            
+            // Find all the sections of our page
+            const loadingSection = document.getElementById('loading-section');
+            const downloadSection = document.getElementById('download-section');
+            const errorSection = document.getElementById('error-section');
+            const downloadLink = document.getElementById('download-link');
+            const errorMessage = document.getElementById('error-message');
+            
+            // Extract the job_id from the page's URL
+            const job_id = "{{ job_id }}";
+            const apiUrl = `/api/status/${job_id}`;
+
+            // Function to check the job status
+            async function checkStatus() {
+                try {
+                    const response = await fetch(apiUrl);
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! status: ${response.status}`);
+                    }
+                    const data = await response.json();
+
+                    // Check the status and update the UI
+                    if (data.status === 'COMPLETE') {
+                        // Stop polling
+                        clearInterval(pollingInterval);
+                        
+                        // Show the download button and hide the loader
+                        loadingSection.style.display = 'none';
+                        errorSection.style.display = 'none';
+                        downloadSection.style.display = 'block';
+                        
+                        // Set the correct download link for the button
+                        downloadLink.href = data.download_url;
+                        
+                    } else if (data.status === 'FAILED') {
+                        // Stop polling
+                        clearInterval(pollingInterval);
+
+                        // Show the error message
+                        loadingSection.style.display = 'none';
+                        downloadSection.style.display = 'none';
+                        errorMessage.textContent = data.error_message || 'An unknown error occurred.';
+                        errorSection.style.display = 'block';
+                    }
+                    // If status is 'PROCESSING' or 'PENDING', we do nothing and just let the next poll happen.
+
+                } catch (error) {
+                    // If the fetch itself fails (e.g., network error), stop and show an error
+                    console.error('Polling error:', error);
+                    clearInterval(pollingInterval);
+                    loadingSection.style.display = 'none';
+                    downloadSection.style.display = 'none';
+                    errorMessage.textContent = 'Could not connect to the server to get status.';
+                    errorSection.style.display = 'block';
+                }
+            }
+
+            // Start polling every 3 seconds (3000 milliseconds)
+            const pollingInterval = setInterval(checkStatus, 3000);
+
+            // Also check the status immediately on page load
+            checkStatus();
+        });
+    </script>
+</body>
+</html> 

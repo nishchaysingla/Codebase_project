@@ -1,0 +1,25 @@
+<!-- templates/index.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Codebase Onboarding Assistant</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+    <style>
+        body { max-width: 800px; margin: auto; padding: 1rem; }
+        .container { text-align: center; margin-top: 5rem; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>AI Codebase Onboarding Assistant</h1>
+        <p>Enter a public GitHub repository URL to automatically generate beginner-friendly documentation.</p>
+        <form action="/generate" method="post">
+            <label for="url">GitHub Repository URL</label>
+            <input type="url" id="url" name="url" placeholder="https://github.com/..." required>
+            <button type="submit">Generate Documentation</button>
+        </form>
+    </div>
+</body>
+</html>

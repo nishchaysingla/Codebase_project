@@ -19,13 +19,7 @@ def index():
     Renders the main landing page.
     For now, we'll create a super simple placeholder HTML.
     """
-    return """
-    <h1>AI Codebase Onboarding Assistant</h1>
-    <form action="/generate" method="post">
-        <input type="text" name="url" placeholder="Enter public GitHub repo URL" size="50" required>
-        <button type="submit">Generate Documentation</button>
-    </form>
-    """
+    return render_template('index.html')
 
 @app.route("/generate", methods=['POST'])
 def generate():
@@ -80,16 +74,7 @@ def run_analysis_job_wrapper(job_id, repo_url):
 
 @app.route("/status/<job_id>")
 def status(job_id):
-    """
-    This is the page the user waits on.
-    For now, it's a simple placeholder. Person B will make this a dynamic page.
-    """
-    return f"""
-    <h1>Processing your request...</h1>
-    <p>Job ID: {job_id}</p>
-    <p>Please wait. This page will update automatically when your file is ready.</p>
-    <p>(Frontend will implement the auto-update logic)</p>
-    """
+    return render_template('status.html', job_id=job_id)
 
 # --- This is the API endpoint that Person B's JavaScript will call ---
 @app.route("/api/status/<job_id>")
