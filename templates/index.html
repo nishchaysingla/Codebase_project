@@ -3,21 +3,93 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>AI Codebase Onboarding Assistant</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/water.css@2/out/water.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
-        body { max-width: 800px; margin: auto; padding: 1rem; }
-        .container { text-align: center; margin-top: 5rem; }
+        body {
+            background: #232b36;
+            color: #f5f6fa;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            margin: 0;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .container {
+            background: #2d3748;
+            padding: 2.5rem 2rem 2rem 2rem;
+            border-radius: 18px;
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.25);
+            max-width: 400px;
+            width: 100%;
+            text-align: center;
+        }
+        h1 {
+            margin-bottom: 0.5rem;
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: 1px;
+        }
+        p {
+            margin-bottom: 1.5rem;
+            color: #bfc9d1;
+            font-size: 1rem;
+        }
+        label {
+            display: block;
+            margin-bottom: 0.5rem;
+            font-weight: 500;
+            color: #bfc9d1;
+        }
+        input[type="text"] {
+            width: 100%;
+            padding: 0.7rem;
+            border-radius: 8px;
+            border: 1px solid #3b4252;
+            background: #232b36;
+            color: #f5f6fa;
+            font-size: 1rem;
+            margin-bottom: 1.2rem;
+            outline: none;
+            transition: border 0.2s;
+        }
+        input[type="text"]:focus {
+            border: 1.5px solid #63b3ed;
+        }
+        button {
+            width: 100%;
+            padding: 0.8rem;
+            background: #3182ce;
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s;
+            box-shadow: 0 2px 8px rgba(49, 130, 206, 0.08);
+        }
+        button:hover {
+            background: #2563eb;
+        }
+        @media (max-width: 500px) {
+            .container {
+                padding: 1.2rem 0.5rem;
+            }
+            h1 {
+                font-size: 1.3rem;
+            }
+        }
     </style>
 </head>
 <body>
     <div class="container">
         <h1>AI Codebase Onboarding Assistant</h1>
         <p>Enter a public GitHub repository URL to automatically generate beginner-friendly documentation.</p>
-        <form action="/generate" method="post">
-            <label for="url">GitHub Repository URL</label>
-            <input type="url" id="url" name="url" placeholder="https://github.com/..." required>
+        <form method="post" action="{{ url_for('generate') }}">
+            <label for="repo-url">GitHub Repository URL</label>
+            <input type="text" id="repo-url" name="url" placeholder="https://github.com/..." required>
             <button type="submit">Generate Documentation</button>
         </form>
     </div>

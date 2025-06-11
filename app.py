@@ -2,6 +2,8 @@ import os
 import uuid
 import threading
 from flask import Flask, request, redirect, url_for, jsonify, render_template, send_from_directory
+from flask import after_this_request 
+import shutil
 
 # --- This is the crucial import from your own work ---
 from engine import run_analysis_job
@@ -40,6 +42,34 @@ def generate():
     
     # Immediately redirect the user so their browser doesn't wait and time out
     return redirect(url_for('status', job_id=job_id))
+
+def cleanup_job_files(job_id):
+    """Safely removes all temporary files and the final zip for a given job."""
+    print(f"Cleaning up files for completed job: {job_id}")
+    try:
+        # Define all paths associated with this specific job
+        repo_path = f"./temp_repo_{job_id}"
+        output_path = f"./output_repo_{job_id}"
+        zip_filename = f"documentation_{job_id}.zip"
+
+        # shutil.rmtree with ignore_errors is robust enough to handle the
+        # lingering .git file lock issue without crashing the app.
+        if os.path.exists(repo_path):
+            shutil.rmtree(repo_path, ignore_errors=True)
+            print(f"Removed temp repo: {repo_path}")
+        
+        if os.path.exists(output_path):
+            shutil.rmtree(output_path, ignore_errors=True)
+            print(f"Removed output repo: {output_path}")
+
+        # Finally, delete the zip file itself
+        if os.path.exists(zip_filename):
+            os.remove(zip_filename)
+            print(f"Removed zip file: {zip_filename}")
+            
+    except Exception as e:
+        # Log any errors but don't crash the server
+        print(f"Warning: A non-critical error occurred during cleanup for job {job_id}: {e}")
 
 def run_analysis_job_wrapper(job_id, repo_url):
     """
@@ -85,10 +115,29 @@ def api_status(job_id):
         return jsonify({'status': 'NOT_FOUND'}), 404
     return jsonify(job)
 
+
 @app.route("/download/<filename>")
 def download(filename):
-    """Serves the generated zip file for download."""
+    """Serves the generated zip file and then triggers cleanup."""
+    # We must extract the job_id from the filename to know what to clean up.
+    # Assumes filename format is 'documentation_some-uuid-string.zip'
+    try:
+        job_id = filename.split('_')[1].replace('.zip', '')
+        
+        # This is a special Flask decorator that schedules a function
+        # to run AFTER the current request has been fully sent to the user.
+        @after_this_request
+        def trigger_cleanup(response):
+            # The background thread will run this function after the download is complete
+            cleanup_thread = threading.Thread(target=cleanup_job_files, args=(job_id,))
+            cleanup_thread.start()
+            return response
+
+    except IndexError:
+        print(f"Warning: Could not parse job_id from filename {filename} for cleanup.")
+        pass
+
     print(f"Serving file: {filename}")
-    # We need to provide the directory where the zip files are stored.
-    # Since they are created in the root of our project, we use '.'
-    return send_from_directory('.', filename, as_attachment=True)
+    # Use the absolute path for robustness
+    directory = os.path.abspath('.')
+    return send_from_directory(directory, filename, as_attachment=True)

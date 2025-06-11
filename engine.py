@@ -4,6 +4,19 @@ import git
 import fnmatch
 import stat
 
+def create_file_tree_string(start_path):
+    """Generates a string representation of a directory tree."""
+    tree_string = ""
+    for root, dirs, files in os.walk(start_path):
+        # We don't want to show the full path, but the path relative to the start
+        level = root.replace(start_path, '').count(os.sep)
+        indent = ' ' * 4 * level
+        tree_string += f"{indent}{os.path.basename(root)}/\n"
+        sub_indent = ' ' * 4 * (level + 1)
+        for f in files:
+            tree_string += f"{sub_indent}{f}\n"
+    return tree_string
+
 def clone_repo(url, dest_path):
     """
     Clones a public GitHub repo to a specified destination path.
@@ -15,120 +28,71 @@ def clone_repo(url, dest_path):
     
     print(f"Cloning {url} into {dest_path}...")
     try:
-        git.Repo.clone_from(url, dest_path, depth=1)
+        repo = git.Repo.clone_from(url, dest_path, depth=1)
         print("Cloning complete.")
+        return repo
     except git.exc.GitCommandError as e:
         print(f"Error cloning repo: {e}")
         raise # Re-raise the exception to be handled by the caller
 
+def should_ignore_dir(dirname, ignored_dirs):
+    if dirname in ignored_dirs:
+        return True
+    return any(fnmatch.fnmatch(dirname, pattern) for pattern in ignored_dirs if '*' in pattern)
+
+def is_text_file(filepath):
+    try:
+        with open(filepath, 'rb') as f:
+            chunk = f.read(1024)
+            if b'\x00' in chunk:
+                return False
+            chunk.decode('utf-8')
+            return True
+    except (UnicodeDecodeError, IOError):
+        return False
+
+# --- Your new and improved get_code_files function ---
 def get_code_files(repo_path):
-    """
-    Walks through a repository and returns a list of file paths to analyze.
-    Filters out directories, large files, and specific file extensions.
-    """
     code_files = []
     
-    # Configuration for filtering
     ignored_dirs = [
-        # Version Control
-        '.git', '.svn', '.hg', '.bzr',
-        # Dependencies
-        'node_modules', 'venv', 'env', '.venv', '.env', 'virtualenv', 'venv.bak',
-        # Python
-        '__pycache__', '*.egg-info', '*.egg', 'dist', 'build', '.pytest_cache', '.mypy_cache',
-        # IDE/Editor
-        '.idea', '.vscode', '.vs', '.sublime', '.atom', '.eclipse', '.settings',
-        # Build/Compile
-        'target', 'out', 'build', 'dist', 'bin', 'obj', '.gradle', '.mvn',
-        # Cache/Logs
-        'logs', 'log', 'cache', '.cache', 'tmp', 'temp',
-        # Documentation
-        'docs', 'documentation', 'doc',
-        # Test Coverage
-        'coverage', '.coverage', 'htmlcov',
-        # Misc
-        '.DS_Store', 'Thumbs.db', 'node_modules', 'bower_components', 'jspm_packages'
+        '.git', 'node_modules', 'venv', '__pycache__', 'dist', 'build', 
+        '.idea', '.vscode', 'target', 'logs', 'docs', '*.egg-info' # Example with wildcard
     ]
     ignored_exts = [
-        # Binary/Compiled Files
-        '.exe', '.dll', '.so', '.dylib', '.o', '.obj', '.pyc', '.pyo', '.pyd',
-        # Build/Dependency Files
-        '.egg', '.whl', '.tar.gz', '.tar.bz2', '.tgz', '.tbz', '.tar.xz', '.txz',
-        # Development/IDE Files
-        '.swp', '.swo', '.bak', '.tmp',
-        # Documentation/Media
-        '.lock', '.log', '.svg', '.png', '.jpg', '.jpeg', '.ico', '.gif', '.pdf', '.zip',
-        '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.mp3', '.mp4', '.avi', '.mov', '.wav',
-        # Environment/Configuration
-        '.env', '.ini', '.cfg', '.yml', '.yaml',
-        # Database Files
-        '.db', '.sqlite', '.sqlite3', '.mdb', '.accdb',
-        # Cache/Log Files
-        '.cache', '.temp',
-        # Font Files
-        '.ttf', '.otf', '.woff', '.woff2', '.eot',
-        # ML/AI Files
-        '.safetensors', '.pt', '.pth', '.h5', '.hdf5', '.onnx', '.pb', '.tflite', '.mlmodel'
+        '.lock', '.log', '.svg', '.png', '.jpg', '.ico', '.gif', '.pdf', '.zip',
+        '.exe', '.dll', '.so', '.pyc', '.env', '.db', '.safetensors', '.pt'
     ]
-    max_file_size_kb = 1000
+    ignored_filenames = [
+        '__init__.py', 'setup.py', 'manage.py', 'config.py',
+        'requirements.txt', 'package.json', 'Dockerfile', '.gitignore', 'LICENSE'
+    ]
+    max_file_size_kb = 100
 
     print("Scanning for code files to analyze...")
-    
-    def should_ignore_dir(dirname):
-        """Check if a directory should be ignored using pattern matching."""
-        # Check exact matches first
-        if dirname in ignored_dirs:
-            return True
-        # Check pattern matches
-        return any(fnmatch.fnmatch(dirname, pattern) for pattern in ignored_dirs if '*' in pattern)
-
-    def is_text_file(filepath):
-        """Check if a file is likely to be a text file."""
-        try:
-            with open(filepath, 'rb') as f:
-                # Read first 1024 bytes
-                chunk = f.read(1024)
-                # Check if it contains null bytes
-                if b'\x00' in chunk:
-                    return False
-                # Try to decode as text
-                chunk.decode('utf-8')
-                return True
-        except (UnicodeDecodeError, IOError):
-            return False
-
     for root, dirs, files in os.walk(repo_path, followlinks=False):
-        # Filter out ignored directories using pattern matching
-        dirs[:] = [d for d in dirs if not should_ignore_dir(d)]
+        dirs[:] = [d for d in dirs if not should_ignore_dir(d, ignored_dirs)]
 
         for file in files:
-            # Skip hidden files unless explicitly allowed
-            if file.startswith('.') and file not in ['.gitignore', '.env.example']:
+            if file in ignored_filenames or (file.startswith('.') and file not in ['.gitignore']):
                 continue
-
-            # Check for ignored extensions
+            if file.startswith('test_') or file.endswith('_test.py'):
+                continue
             if any(file.endswith(ext) for ext in ignored_exts):
                 continue
             
             file_path = os.path.join(root, file)
-
-            # Skip if it's a symlink
             if os.path.islink(file_path):
                 continue
 
-            # Check file size
             try:
                 if os.path.getsize(file_path) > max_file_size_kb * 1024:
-                    print(f"Skipping large file: {file_path}")
+                    print(f"Skipping large file: {os.path.basename(file_path)}")
                     continue
-                
-                # Skip binary files
                 if not is_text_file(file_path):
-                    print(f"Skipping binary file: {file_path}")
+                    print(f"Skipping binary file: {os.path.basename(file_path)}")
                     continue
-
-            except OSError as e:
-                print(f"Error accessing file {file_path}: {e}")
+            except OSError:
                 continue
 
             code_files.append(file_path)
@@ -155,60 +119,9 @@ def on_rm_error(func, path, exc_info):
     else:
         raise
 
-def safe_remove_dir(path: str) -> None:
-    """
-    Safely remove a directory, handling Windows permission errors for .git directories.
-    """
-    if not os.path.exists(path):
-        return
 
-    try:
-        # First try normal removal
-        shutil.rmtree(path)
-    except PermissionError as e:
-        if '.git' in path:
-            print(f"Attempting to force remove .git directory: {path}")
-            try:
-                # On Windows, we need to remove read-only attributes first
-                for root, dirs, files in os.walk(path):
-                    for dir in dirs:
-                        os.chmod(os.path.join(root, dir), 0o777)
-                    for file in files:
-                        os.chmod(os.path.join(root, file), 0o777)
-                # Try removal again
-                shutil.rmtree(path, ignore_errors=True)
-            except Exception as e:
-                print(f"Warning: Could not fully remove {path}: {e}")
-                # Continue execution even if cleanup fails
-        else:
-            print(f"Warning: Could not remove {path}: {e}")
-            # Continue execution even if cleanup fails
 
-def cleanup_old_jobs():
-    """
-    Clean up any leftover files from previous jobs.
-    Removes old zip files, output directories, and temp repositories.
-    """
-    print("Cleaning up old job files...")
-    current_dir = os.path.dirname(os.path.abspath(__file__))
-    
-    # Clean up old zip files
-    for file in os.listdir(current_dir):
-        if file.startswith("documentation_") and file.endswith(".zip"):
-            try:
-                os.remove(os.path.join(current_dir, file))
-                print(f"Removed old zip file: {file}")
-            except Exception as e:
-                print(f"Warning: Could not remove old zip file {file}: {e}")
-    
-    # Clean up old output and temp directories
-    for item in os.listdir(current_dir):
-        if (item.startswith("output_repo_") or item.startswith("temp_repo_")) and os.path.isdir(os.path.join(current_dir, item)):
-            try:
-                safe_remove_dir(os.path.join(current_dir, item))
-                print(f"Removed old directory: {item}")
-            except Exception as e:
-                print(f"Warning: Could not remove old directory {item}: {e}")
+
 
 def run_analysis_job(repo_url, job_id):
     """
@@ -216,16 +129,14 @@ def run_analysis_job(repo_url, job_id):
     Takes a repo URL and a job ID, performs the full analysis,
     and returns the path to the final zip file.
     """
-    # Clean up any old job files before starting
-    cleanup_old_jobs()
-    
     repo_path = f"./temp_repo_{job_id}"
     output_path = f"./output_repo_{job_id}"
     zip_filename = f"documentation_{job_id}"
     
+    repo = None  # <-- NEW: Initialize repo variable to ensure it exists for the 'finally' block
     try:
         # Phase 1: Clone & Filter
-        clone_repo(repo_url, repo_path)
+        repo = clone_repo(repo_url, repo_path)  # <-- MODIFIED: Capture the repo object
         files_to_analyze = get_code_files(repo_path)
         
         # If no files found, exit gracefully
@@ -235,7 +146,7 @@ def run_analysis_job(repo_url, job_id):
 
         # Phase 2: Process each file and generate explanations
         if os.path.exists(output_path):
-            shutil.rmtree(output_path) # Clean up previous output
+            shutil.rmtree(output_path)
 
         individual_summaries = {}
         for file_path in files_to_analyze:
@@ -246,26 +157,24 @@ def run_analysis_job(repo_url, job_id):
                 print(f"Could not read file {file_path}: {e}")
                 continue
             
-            # --- This is where we call Person C's function ---
             explanation = generate_file_explanation(content, file_path)
             
-            # Create the mirrored directory structure in the output folder
             relative_path = os.path.relpath(file_path, repo_path)
             output_file_path = os.path.join(output_path, relative_path)
             os.makedirs(os.path.dirname(output_file_path), exist_ok=True)
             
-            # Save the explanation as a Markdown file (e.g., helpers.py -> helpers.md)
             base, _ = os.path.splitext(output_file_path)
             with open(base + ".md", 'w', encoding='utf-8') as f:
                 f.write(explanation)
             
-            # Store the first line of the explanation for the final summary
             first_line = explanation.split('\n')[0]
             individual_summaries[relative_path] = first_line
 
         # Phase 3: Generate the final project overview
-        # --- This is the second call to Person C's functions ---
-        overview_content = generate_project_overview("DUMMY_TREE", individual_summaries)
+        print("Generating final project overview...")
+        # Note: I moved this loop outside the main file processing loop. It should only run once.
+        file_tree = create_file_tree_string(output_path)
+        overview_content = generate_project_overview(file_tree, individual_summaries)
         with open(os.path.join(output_path, "_PROJECT_OVERVIEW.md"), 'w', encoding='utf-8') as f:
             f.write(overview_content)
             
@@ -275,17 +184,14 @@ def run_analysis_job(repo_url, job_id):
         print(f"Successfully created zip file: {final_zip_path}")
 
         return final_zip_path
-
+        
     finally:
-        # Phase 5: Cleanup - VERY IMPORTANT
-        print("Cleaning up temporary files...")
-        try:
-            safe_remove_dir(repo_path)
-            safe_remove_dir(output_path)
-        except Exception as e:
-            print(f"Warning: Error during cleanup: {e}")
-            # Continue execution even if cleanup fails
-        print("Cleanup complete.")
+        # <-- NEW: This block now guarantees the repo lock is released
+        # This is the crucial fix for the empty folder issue.
+        if repo:
+            repo.close()
+            print(f"Git repo object for job {job_id} closed.")
+
 
 # This block allows us to test the engine directly
 if __name__ == "__main__":

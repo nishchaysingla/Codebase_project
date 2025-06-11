@@ -51,8 +51,7 @@
         </div>
     </div>
 
-    <!-- The JavaScript will go here in the next step -->
-     <!-- Paste this right before the </body> tag in templates/status.html -->
+    
     <script>
         // This function will run when the page is fully loaded
         document.addEventListener('DOMContentLoaded', function() {
@@ -115,9 +114,24 @@
 
             // Start polling every 3 seconds (3000 milliseconds)
             const pollingInterval = setInterval(checkStatus, 3000);
-
-            // Also check the status immediately on page load
             checkStatus();
+            
+            downloadLink.addEventListener('click', function() {
+                console.log("Download clicked. Redirecting to homepage in 2 seconds...");
+
+                // Hide the download button immediately to prevent double-clicks
+                // and show a "thank you" message.
+                downloadSection.innerHTML = '<h2>Thank you!</h2><p>Your download has started. You will be redirected shortly.</p>';
+
+                // We use setTimeout to give the browser a moment to initiate the file download
+                // before we change the page's location. 2 seconds is a safe delay.
+                setTimeout(function() {
+                    // Redirect the user back to the homepage
+                    window.location.href = '/';
+                }, 2000); // 2000 milliseconds = 2 seconds
+            });
+            // Also check the status immediately on page load
+            
         });
     </script>
 </body>
