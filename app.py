@@ -2,8 +2,11 @@ import os
 import uuid
 import threading
 from flask import Flask, request, redirect, url_for, jsonify, render_template, send_from_directory
-from flask import after_this_request 
+from flask import after_this_request
 import shutil
+import platform
+import subprocess
+from google.cloud import datastore
 
 # --- This is the crucial import from your own work ---
 from engine import run_analysis_job
@@ -11,9 +14,10 @@ from engine import run_analysis_job
 # Initialize the Flask application
 app = Flask(__name__)
 
-# This simple dictionary will act as our in-memory "database" for job statuses.
-# In a real production app, you might use a database like Redis or a more robust queue.
-jobs = {} 
+# Initialize the Google Cloud Datastore client
+# This will use the project defined in your GOOGLE_CLOUD_PROJECT environment variable
+datastore_client = datastore.Client()
+
 
 @app.route("/")
 def index():
@@ -34,72 +38,111 @@ def generate():
         return "URL is required", 400
 
     job_id = str(uuid.uuid4())
-    
+
+    # --- Create a record in Datastore to track the job ---
+    kind = 'Job'
+    key = datastore_client.key(kind, job_id)
+    job_entity = datastore.Entity(key=key)
+    job_entity.update({
+        'status': 'PENDING',
+        'download_url': None,
+        'error_message': None
+    })
+    datastore_client.put(job_entity)
+
     # --- This is where we start the background job ---
     # We pass the job_id and repo_url to our target function.
     thread = threading.Thread(target=run_analysis_job_wrapper, args=(job_id, repo_url))
     thread.start()
-    
+
     # Immediately redirect the user so their browser doesn't wait and time out
     return redirect(url_for('status', job_id=job_id))
 
+
 def cleanup_job_files(job_id):
-    """Safely removes all temporary files and the final zip for a given job."""
+    """
+    Safely removes all temporary files and the final zip for a given job.
+    Uses platform-specific commands for robustness on Windows.
+    """
     print(f"Cleaning up files for completed job: {job_id}")
-    try:
-        # Define all paths associated with this specific job
-        repo_path = f"./temp_repo_{job_id}"
-        output_path = f"./output_repo_{job_id}"
-        zip_filename = f"documentation_{job_id}.zip"
 
-        # shutil.rmtree with ignore_errors is robust enough to handle the
-        # lingering .git file lock issue without crashing the app.
-        if os.path.exists(repo_path):
+    # Use absolute paths to prevent ambiguity
+    current_directory = os.path.abspath('.')
+    repo_path = os.path.join(current_directory, f"temp_repo_{job_id}")
+    output_path = os.path.join(current_directory, f"output_repo_{job_id}")
+    zip_filename = os.path.join(current_directory, f"documentation_{job_id}.zip")
+
+    # --- Robust directory removal ---
+    if os.path.exists(repo_path):
+        print(f"Attempting to remove temp repo: {repo_path}")
+        try:
+            if platform.system() == "Windows":
+                # On Windows, shutil.rmtree can struggle with .git directories.
+                # The native 'rmdir' command is more reliable.
+                # /s is for recursive, /q is for quiet mode.
+                subprocess.run(f'rmdir /s /q "{repo_path}"', shell=True, check=True)
+                print(f"Successfully removed temp repo: {repo_path}")
+            else:
+                # For other OSes, shutil.rmtree is generally fine.
+                shutil.rmtree(repo_path)
+                print(f"Successfully removed temp repo: {repo_path}")
+        except (subprocess.CalledProcessError, OSError) as e:
+            # If even the native commands fail, log the error.
+            print(f"ERROR: Failed to remove directory {repo_path}. Error: {e}")
+            # As a last resort, try the less reliable method which might clean some files.
             shutil.rmtree(repo_path, ignore_errors=True)
-            print(f"Removed temp repo: {repo_path}")
-        
-        if os.path.exists(output_path):
-            shutil.rmtree(output_path, ignore_errors=True)
-            print(f"Removed output repo: {output_path}")
 
-        # Finally, delete the zip file itself
-        if os.path.exists(zip_filename):
+    # Clean up other generated files, which are less likely to have lock issues.
+    if os.path.exists(output_path):
+        shutil.rmtree(output_path, ignore_errors=True)
+        print(f"Removed output repo: {output_path}")
+
+    if os.path.exists(zip_filename):
+        try:
             os.remove(zip_filename)
             print(f"Removed zip file: {zip_filename}")
-            
-    except Exception as e:
-        # Log any errors but don't crash the server
-        print(f"Warning: A non-critical error occurred during cleanup for job {job_id}: {e}")
+        except OSError as e:
+            print(f"Warning: Could not remove zip file {zip_filename}: {e}")
+
 
 def run_analysis_job_wrapper(job_id, repo_url):
     """
     A wrapper function that runs our main job and updates the status.
     This is what the background thread will execute.
     """
-    jobs[job_id] = {'status': 'PROCESSING', 'download_url': None}
+    # --- Update status in Datastore ---
+    key = datastore_client.key('Job', job_id)
+    job_entity = datastore_client.get(key)
+    job_entity['status'] = 'PROCESSING'
+    datastore_client.put(job_entity)
+    
     print(f"Starting job {job_id} for URL: {repo_url}")
     
     try:
         # --- This calls your tested engine code ---
+        # NOTE: We need to adjust the engine to work in a read-only filesystem on App Engine
         zip_file_path = run_analysis_job(repo_url, job_id)
         
         if zip_file_path:
             # Job succeeded
-            jobs[job_id]['status'] = 'COMPLETE'
+            job_entity['status'] = 'COMPLETE'
             # Create a URL the user can use to download the file
-            jobs[job_id]['download_url'] = f"/download/{os.path.basename(zip_file_path)}"
+            job_entity['download_url'] = f"/download/{os.path.basename(zip_file_path)}"
             print(f"Job {job_id} completed successfully.")
         else:
             # Job failed gracefully (e.g., no files found)
-            jobs[job_id]['status'] = 'FAILED'
-            jobs[job_id]['error_message'] = 'No suitable files were found to analyze in the repository.'
+            job_entity['status'] = 'FAILED'
+            job_entity['error_message'] = 'No suitable files were found to analyze in the repository.'
             print(f"Job {job_id} failed: No files to analyze.")
 
     except Exception as e:
         # Job failed with an unexpected error
         print(f"Job {job_id} failed with an error: {e}")
-        jobs[job_id]['status'] = 'FAILED'
-        jobs[job_id]['error_message'] = str(e)
+        job_entity['status'] = 'FAILED'
+        job_entity['error_message'] = str(e)
+    
+    # --- Final update to Datastore ---
+    datastore_client.put(job_entity)
 
 
 @app.route("/status/<job_id>")
@@ -109,11 +152,15 @@ def status(job_id):
 # --- This is the API endpoint that Person B's JavaScript will call ---
 @app.route("/api/status/<job_id>")
 def api_status(job_id):
-    """Provides the status of a job in JSON format."""
-    job = jobs.get(job_id)
-    if not job:
+    """Provides the status of a job in JSON format from Datastore."""
+    key = datastore_client.key('Job', job_id)
+    job_entity = datastore_client.get(key)
+    
+    if not job_entity:
         return jsonify({'status': 'NOT_FOUND'}), 404
-    return jsonify(job)
+    
+    # The entity itself is a dict-like object, perfect for jsonify
+    return jsonify(job_entity)
 
 
 @app.route("/download/<filename>")
@@ -123,7 +170,7 @@ def download(filename):
     # Assumes filename format is 'documentation_some-uuid-string.zip'
     try:
         job_id = filename.split('_')[1].replace('.zip', '')
-        
+
         # This is a special Flask decorator that schedules a function
         # to run AFTER the current request has been fully sent to the user.
         @after_this_request

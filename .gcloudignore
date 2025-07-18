@@ -1,0 +1,25 @@
+# --- Git and Python ---
+.git/
+.gitignore
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# --- Virtual Environment ---
+# Never upload your local virtual environment.
+# App Engine will create its own based on requirements.txt.
+venv/
+.env
+
+# --- Temporary Files ---
+# These are generated during local testing and should not be deployed.
+temp_repo_*/
+output_repo_*/
+documentation_*.zip
+
+# --- IDE and OS specific files ---
+.idea/
+.vscode/
+*.DS_Store
+Thumbs.db 

@@ -1,8 +1,11 @@
+import fnmatch
+import git
 import os
 import shutil
-import git
-import fnmatch
 import stat
+
+from ai_content import generate_file_explanation, generate_project_overview
+
 
 def create_file_tree_string(start_path):
     """Generates a string representation of a directory tree."""
@@ -17,6 +20,7 @@ def create_file_tree_string(start_path):
             tree_string += f"{sub_indent}{f}\n"
     return tree_string
 
+
 def clone_repo(url, dest_path):
     """
     Clones a public GitHub repo to a specified destination path.
@@ -24,7 +28,8 @@ def clone_repo(url, dest_path):
     """
     if os.path.exists(dest_path):
         print(f"Cleaning up old directory: {dest_path}")
-        shutil.rmtree(dest_path)
+        # Use the robust on_rm_error for cleanup here as well
+        shutil.rmtree(dest_path, onerror=on_rm_error)
     
     print(f"Cloning {url} into {dest_path}...")
     try:
@@ -33,12 +38,14 @@ def clone_repo(url, dest_path):
         return repo
     except git.exc.GitCommandError as e:
         print(f"Error cloning repo: {e}")
-        raise # Re-raise the exception to be handled by the caller
+        raise  # Re-raise the exception to be handled by the caller
+
 
 def should_ignore_dir(dirname, ignored_dirs):
     if dirname in ignored_dirs:
         return True
     return any(fnmatch.fnmatch(dirname, pattern) for pattern in ignored_dirs if '*' in pattern)
+
 
 def is_text_file(filepath):
     try:
@@ -46,18 +53,20 @@ def is_text_file(filepath):
             chunk = f.read(1024)
             if b'\x00' in chunk:
                 return False
+            # Try to decode a chunk of the file to see if it's text
             chunk.decode('utf-8')
-            return True
+        return True
     except (UnicodeDecodeError, IOError):
         return False
 
-# --- Your new and improved get_code_files function ---
+
 def get_code_files(repo_path):
     code_files = []
     
+    # These configurations can be tuned
     ignored_dirs = [
         '.git', 'node_modules', 'venv', '__pycache__', 'dist', 'build', 
-        '.idea', '.vscode', 'target', 'logs', 'docs', '*.egg-info' # Example with wildcard
+        '.idea', '.vscode', 'target', 'logs', 'docs', '*.egg-info'
     ]
     ignored_exts = [
         '.lock', '.log', '.svg', '.png', '.jpg', '.ico', '.gif', '.pdf', '.zip',
@@ -70,10 +79,17 @@ def get_code_files(repo_path):
     max_file_size_kb = 100
 
     print("Scanning for code files to analyze...")
+    # Ensure the path exists before walking
+    if not os.path.isdir(repo_path):
+        print(f"Warning: Directory not found at {repo_path}, cannot scan for files.")
+        return []
+
     for root, dirs, files in os.walk(repo_path, followlinks=False):
+        # Filter out ignored directories in-place
         dirs[:] = [d for d in dirs if not should_ignore_dir(d, ignored_dirs)]
 
         for file in files:
+            # Skip files based on various ignore criteria
             if file in ignored_filenames or (file.startswith('.') and file not in ['.gitignore']):
                 continue
             if file.startswith('test_') or file.endswith('_test.py'):
@@ -82,10 +98,12 @@ def get_code_files(repo_path):
                 continue
             
             file_path = os.path.join(root, file)
+            # Make sure we don't follow symbolic links
             if os.path.islink(file_path):
                 continue
 
             try:
+                # Check file size and whether it's a binary file
                 if os.path.getsize(file_path) > max_file_size_kb * 1024:
                     print(f"Skipping large file: {os.path.basename(file_path)}")
                     continue
@@ -93,14 +111,13 @@ def get_code_files(repo_path):
                     print(f"Skipping binary file: {os.path.basename(file_path)}")
                     continue
             except OSError:
+                # This can happen if the file is deleted during the scan
                 continue
 
             code_files.append(file_path)
             
     print(f"Found {len(code_files)} files to analyze.")
     return code_files
-
-from ai_content import generate_file_explanation, generate_project_overview
 
 def on_rm_error(func, path, exc_info):
     """
@@ -109,9 +126,6 @@ def on_rm_error(func, path, exc_info):
     it attempts to add write permission and then retries.
     If the error is for another reason it re-raises the error.
     """
-    # path contains the path of the file that couldn't be removed
-    # func is the function that failed
-    # exc_info is a tuple of the exception info
     if not os.access(path, os.W_OK):
         # Is the error an access error?
         os.chmod(path, stat.S_IWUSR)
@@ -120,33 +134,34 @@ def on_rm_error(func, path, exc_info):
         raise
 
 
-
-
-
 def run_analysis_job(repo_url, job_id):
     """
     The main orchestrator function.
     Takes a repo URL and a job ID, performs the full analysis,
     and returns the path to the final zip file.
+    NOTE: All file operations are now scoped to the /tmp/ directory.
     """
-    repo_path = f"./temp_repo_{job_id}"
-    output_path = f"./output_repo_{job_id}"
-    zip_filename = f"documentation_{job_id}"
-    
-    repo = None  # <-- NEW: Initialize repo variable to ensure it exists for the 'finally' block
+    # App Engine has a read-only filesystem, except for the /tmp directory.
+    base_path = "/tmp"
+    repo_path = os.path.join(base_path, f"temp_repo_{job_id}")
+    output_path = os.path.join(base_path, f"output_repo_{job_id}")
+    zip_filename_base = f"documentation_{job_id}"
+    zip_path_base = os.path.join(base_path, zip_filename_base)
+
+    repo = None
     try:
         # Phase 1: Clone & Filter
-        repo = clone_repo(repo_url, repo_path)  # <-- MODIFIED: Capture the repo object
+        repo = clone_repo(repo_url, repo_path)
         files_to_analyze = get_code_files(repo_path)
         
-        # If no files found, exit gracefully
         if not files_to_analyze:
             print("No suitable files found to analyze.")
             return None
 
         # Phase 2: Process each file and generate explanations
         if os.path.exists(output_path):
-            shutil.rmtree(output_path)
+            shutil.rmtree(output_path, onerror=on_rm_error)
+        os.makedirs(output_path, exist_ok=True)
 
         individual_summaries = {}
         for file_path in files_to_analyze:
@@ -172,7 +187,6 @@ def run_analysis_job(repo_url, job_id):
 
         # Phase 3: Generate the final project overview
         print("Generating final project overview...")
-        # Note: I moved this loop outside the main file processing loop. It should only run once.
         file_tree = create_file_tree_string(output_path)
         overview_content = generate_project_overview(file_tree, individual_summaries)
         with open(os.path.join(output_path, "_PROJECT_OVERVIEW.md"), 'w', encoding='utf-8') as f:
@@ -180,25 +194,21 @@ def run_analysis_job(repo_url, job_id):
             
         # Phase 4: Zip the final output folder
         print("Zipping the final documentation...")
-        final_zip_path = shutil.make_archive(zip_filename, 'zip', output_path)
+        final_zip_path = shutil.make_archive(zip_path_base, 'zip', output_path)
         print(f"Successfully created zip file: {final_zip_path}")
 
         return final_zip_path
         
     finally:
-        # <-- NEW: This block now guarantees the repo lock is released
-        # This is the crucial fix for the empty folder issue.
         if repo:
             repo.close()
             print(f"Git repo object for job {job_id} closed.")
 
-
 # This block allows us to test the engine directly
 if __name__ == "__main__":
     print("--- Running Engine Test ---")
-    # A small, simple repo is best for testing
     test_repo_url = "https://github.com/pallets-eco/flask-sqlalchemy"
-    test_job_id = "local_test"
+    test_job_id = "local_test_tmp"
     
     zip_file = run_analysis_job(test_repo_url, test_job_id)
     
